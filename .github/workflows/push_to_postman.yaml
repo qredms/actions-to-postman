@@ -1,0 +1,84 @@
+
+name: Generate and Push Postman Collection
+
+on:
+  push:
+    branches:
+      - main 
+    paths:
+      - 'cloudformation/openapi.yaml' # Only runs if the OpenAPI file changes
+      - '.github/workflows/push_to_postman.yaml' # Or if the workflow file itself changes
+  workflow_dispatch: # Allows manual triggering from the Actions tab
+
+jobs:
+  generate_and_push_collection:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # Needed to checkout the repository
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # The openapi-to-postmanv2 tool is a Node.js package
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20' # Specify a Long Term Support (LTS) version
+
+      # This tool converts OpenAPI specs to Postman Collection format
+      - name: Install openapi-to-postmanv2
+        run: npm install -g openapi-to-postmanv2
+
+      # Takes the openapi.yaml and generates postman_collection.json
+      - name: Convert OpenAPI to Postman Collection
+        id: generate_collection # Assign an ID to this step to reference its outputs
+        run: |
+          INPUT_OAS_FILE="cloudformation/openapi.yaml"
+          OUTPUT_COLLECTION_FILE="postman_collection.json"
+          openapi2postmanv2 -s "${INPUT_OAS_FILE}" -o "${OUTPUT_COLLECTION_FILE}" -p
+          echo "Generated Postman collection: ${OUTPUT_COLLECTION_FILE}"
+          # Set the path of the generated file as an output for later steps
+          echo "collection_file=${OUTPUT_COLLECTION_FILE}" >> $GITHUB_OUTPUT
+
+      # The Postman CLI is used to interact with the Postman API
+      - name: Install Postman CLI
+        run: |
+          curl -o- "https://dl-cli.pstmn.io/install/linux64.sh" | sh
+          # Add Postman CLI to the GITHUB_PATH for subsequent steps to find it
+          echo "/home/runner/bin" >> $GITHUB_PATH
+
+      # Uses the POSTMAN_API_KEY secret to authenticate
+      - name: Log in to Postman CLI
+        run: postman login --with-api-key ${{ secrets.POSTMAN_API_KEY }}
+
+      # This step will either create a new collection or update an existing one
+      # based on the presence of the POSTMAN_COLLECTION_UID secret.
+      - name: Push Collection to Postman Workspace
+        env:
+          POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
+          # POSTMAN_COLLECTION_UID is optional. If empty, a new collection will be created.
+          POSTMAN_COLLECTION_UID: ${{ secrets.POSTMAN_COLLECTION_UID || '' }} 
+          COLLECTION_FILE_PATH: ${{ steps.generate_collection.outputs.collection_file }}
+        run: |
+          echo "Workspace ID: $POSTMAN_WORKSPACE_ID"
+          echo "Collection File Path: $COLLECTION_FILE_PATH"
+          
+          if [ -z "$POSTMAN_COLLECTION_UID" ]; then
+            echo "POSTMAN_COLLECTION_UID is not set. Creating a new collection."
+            # The collection name will be taken from the 'name' property inside the generated collection JSON.
+            postman collection create "$COLLECTION_FILE_PATH" -w "$POSTMAN_WORKSPACE_ID"
+            echo "New collection created."
+          else
+            echo "POSTMAN_COLLECTION_UID is set to '$POSTMAN_COLLECTION_UID'. Updating existing collection."
+            postman collection update "$POSTMAN_COLLECTION_UID" -w "$POSTMAN_WORKSPACE_ID" "$COLLECTION_FILE_PATH"
+            echo "Collection '$POSTMAN_COLLECTION_UID' updated."
+          fi
+
+      - name: Upload Postman Collection as Artifact
+        if: always() # Run this step even if previous steps fail
+        uses: actions/upload-artifact@v4
+        with:
+          name: postman-collection
+          path: ${{ steps.generate_collection.outputs.collection_file }}
+          retention-days: 7 # Keep artifact for 7 days
