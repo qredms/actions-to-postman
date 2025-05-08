@@ -54,10 +54,10 @@ jobs:
           
           if [ -z "$POSTMAN_COLLECTION_UID" ]; then
             echo "Creating a new collection..."
-            postman-cli collection create --file "$COLLECTION_FILE_PATH" --workspace "$POSTMAN_WORKSPACE_ID"
+            postman collection create --file "$COLLECTION_FILE_PATH" --workspace "$POSTMAN_WORKSPACE_ID"
           else
             echo "Updating existing collection..."
-            postman-cli collection update --uid "$POSTMAN_COLLECTION_UID" --file "$COLLECTION_FILE_PATH"
+            postman collection update --uid "$POSTMAN_COLLECTION_UID" --file "$COLLECTION_FILE_PATH"
           fi
 
       - name: Upload Postman Collection as Artifact
