@@ -56,7 +56,7 @@ jobs:
           
           if [ -z "$POSTMAN_COLLECTION_UID" ]; then
             echo "Creating a new collection..."
-            postman collection create --file "$COLLECTION_FILE_PATH" --workspace "$POSTMAN_WORKSPACE_ID"
+            postman collection create --file "$COLLECTION_FILE_PATH" --workspace "$POSTMAN_WORKSPACE_ID" --name "My Collection"
           else
             echo "Updating existing collection..."
             postman collection update --uid "$POSTMAN_COLLECTION_UID" --file "$COLLECTION_FILE_PATH"
