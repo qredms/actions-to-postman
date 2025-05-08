@@ -37,8 +37,10 @@ jobs:
 
       - name: Install Postman CLI
         run: |
-          curl -o- "https://dl-cli.pstmn.io/install/linux64.sh" | sh
-          echo "$HOME/.postman/bin" >> $GITHUB_PATH
+          curl -sL https://dl-cli.pstmn.io/postman-cli/latest/linux64 -o postman
+          chmod +x postman
+          sudo mv postman /usr/local/bin/postman
+          postman --version
 
       - name: Log in to Postman CLI
         run: postman login --with-api-key "${{ secrets.POSTMAN_API_KEY }}"
