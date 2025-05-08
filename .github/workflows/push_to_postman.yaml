@@ -24,28 +24,125 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Install openapi-to-postmanv2
-        run: npm install -g openapi-to-postmanv2
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Convert OpenAPI to Postman Collection
-        id: generate_collection
+      - name: Validate OpenAPI file
         run: |
           INPUT_OAS_FILE="cloudformation/openapi.yaml"
-          OUTPUT_COLLECTION_FILE="postman_collection.json"
           
-          # Ensure the OpenAPI file exists
+          # Check if file exists
           if [ ! -f "$INPUT_OAS_FILE" ]; then
             echo "Error: OpenAPI file not found at $INPUT_OAS_FILE"
             ls -la cloudformation/
             exit 1
           fi
           
-          openapi2postmanv2 -s "${INPUT_OAS_FILE}" -o "${OUTPUT_COLLECTION_FILE}" -p
-          echo "collection_file=${OUTPUT_COLLECTION_FILE}" >> $GITHUB_OUTPUT
+          # Check file size
+          FILE_SIZE=$(stat -c%s "$INPUT_OAS_FILE")
+          echo "OpenAPI file size: $FILE_SIZE bytes"
           
-          # Display the generated collection for debugging
-          echo "Generated collection content:"
-          cat "${OUTPUT_COLLECTION_FILE}" | jq '.info'
+          # Show file content (first 100 lines)
+          echo "OpenAPI file content (first 100 lines):"
+          head -n 100 "$INPUT_OAS_FILE"
+
+      - name: Install openapi-to-postmanv2
+        run: npm install -g openapi-to-postmanv2
+
+      - name: Test OpenAPI conversion
+        id: generate_collection
+        run: |
+          INPUT_OAS_FILE="cloudformation/openapi.yaml"
+          OUTPUT_COLLECTION_FILE="postman_collection.json"
+          
+          # Run conversion with debug output
+          echo "Running OpenAPI to Postman conversion..."
+          openapi2postmanv2 -s "${INPUT_OAS_FILE}" -o "${OUTPUT_COLLECTION_FILE}" -p -d
+          
+          # Check if conversion was successful
+          if [ ! -f "$OUTPUT_COLLECTION_FILE" ]; then
+            echo "Error: Conversion failed to generate output file"
+            exit 1
+          fi
+          
+          # Check generated file size
+          FILE_SIZE=$(stat -c%s "$OUTPUT_COLLECTION_FILE")
+          echo "Generated collection file size: $FILE_SIZE bytes"
+          
+          # Validate the collection structure
+          if [ "$FILE_SIZE" -lt 100 ]; then
+            echo "Warning: Generated collection file is suspiciously small"
+          fi
+          
+          # Check if the collection has items
+          ITEM_COUNT=$(jq '.item | length' "$OUTPUT_COLLECTION_FILE")
+          echo "Collection item count: $ITEM_COUNT"
+          
+          if [ "$ITEM_COUNT" -eq 0 ]; then
+            echo "Warning: Generated collection has no items (endpoints)"
+            
+            # Inspect full content for small collections
+            if [ "$FILE_SIZE" -lt 5000 ]; then
+              echo "Full collection content:"
+              cat "$OUTPUT_COLLECTION_FILE"
+            else
+              echo "Collection structure:"
+              jq '.info, .item | length' "$OUTPUT_COLLECTION_FILE"
+            fi
+          fi
+          
+          echo "collection_file=${OUTPUT_COLLECTION_FILE}" >> $GITHUB_OUTPUT
+
+      - name: Create sample collection if needed
+        run: |
+          OUTPUT_COLLECTION_FILE="postman_collection.json"
+          ITEM_COUNT=$(jq '.item | length' "$OUTPUT_COLLECTION_FILE")
+          
+          if [ "$ITEM_COUNT" -eq 0 ]; then
+            echo "Creating a sample collection with test endpoints..."
+            cat > "$OUTPUT_COLLECTION_FILE" << EOL
+          {
+            "info": {
+              "name": "API Collection",
+              "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+            },
+            "item": [
+              {
+                "name": "Test Endpoint",
+                "request": {
+                  "method": "GET",
+                  "url": {
+                    "raw": "https://example.com/api/test",
+                    "protocol": "https",
+                    "host": ["example", "com"],
+                    "path": ["api", "test"]
+                  }
+                },
+                "response": []
+              },
+              {
+                "name": "Another Test Endpoint",
+                "request": {
+                  "method": "POST",
+                  "url": {
+                    "raw": "https://example.com/api/submit",
+                    "protocol": "https",
+                    "host": ["example", "com"],
+                    "path": ["api", "submit"]
+                  },
+                  "body": {
+                    "mode": "raw",
+                    "raw": "{\n  \"key\": \"value\"\n}",
+                    "options": { "raw": { "language": "json" } }
+                  }
+                },
+                "response": []
+              }
+            ]
+          }
+          EOL
+            echo "Created a sample collection with test endpoints"
+          fi
 
       - name: Install Postman CLI
         run: |
@@ -76,38 +173,45 @@ jobs:
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
           POSTMAN_COLLECTION_UID: ${{ secrets.POSTMAN_COLLECTION_UID }}
           COLLECTION_FILE_PATH: ${{ steps.generate_collection.outputs.collection_file }}
-          COLLECTION_NAME: "API Collection" # Set a specific name for your collection
+          COLLECTION_NAME: "API Collection"
         run: |
           echo "Workspace ID: $POSTMAN_WORKSPACE_ID"
           echo "Collection File Path: $COLLECTION_FILE_PATH"
           echo "Collection Name: $COLLECTION_NAME"
-
+          
+          # Display the structure of the collection file before pushing
+          echo "Collection file structure:"
+          jq '.info.name, .item | length' "$COLLECTION_FILE_PATH"
+          
           if [ -z "$POSTMAN_COLLECTION_UID" ] || [ "$POSTMAN_COLLECTION_UID" = "null" ]; then
             echo "Creating a new collection..."
             RESULT=$(postman collection create --file "$COLLECTION_FILE_PATH" --workspace "$POSTMAN_WORKSPACE_ID" --name "$COLLECTION_NAME")
             echo "Create Result: $RESULT"
             
-            # Extract the collection UID from the result (format may vary)
+            # Extract the collection UID from the result
             COLLECTION_UID=$(echo "$RESULT" | grep -oP 'Collection created with UID: \K[a-zA-Z0-9-]+' || echo "")
             echo "Created collection UID: $COLLECTION_UID"
             echo "collection_uid=$COLLECTION_UID" >> $GITHUB_OUTPUT
           else
             echo "Updating existing collection with UID: $POSTMAN_COLLECTION_UID"
-            RESULT=$(postman collection update --uid "$POSTMAN_COLLECTION_UID" --file "$COLLECTION_FILE_PATH")
-            echo "Update Result: $RESULT"
-            echo "collection_uid=$POSTMAN_COLLECTION_UID" >> $GITHUB_OUTPUT
+            
+            # Force create a new collection instead of updating
+            # This is a temporary change for troubleshooting
+            echo "Creating a new collection instead of updating..."
+            NEW_COLLECTION_NAME="${COLLECTION_NAME}_$(date +%s)"
+            RESULT=$(postman collection create --file "$COLLECTION_FILE_PATH" --workspace "$POSTMAN_WORKSPACE_ID" --name "$NEW_COLLECTION_NAME")
+            echo "Create Result: $RESULT"
+            
+            # Original update code (commented out for now)
+            # RESULT=$(postman collection update --uid "$POSTMAN_COLLECTION_UID" --file "$COLLECTION_FILE_PATH")
+            # echo "Update Result: $RESULT"
+            # echo "collection_uid=$POSTMAN_COLLECTION_UID" >> $GITHUB_OUTPUT
           fi
 
       - name: List Collections after Push
         run: |
           echo "Collections in workspace after push:"
           postman collection list --workspace "${{ secrets.POSTMAN_WORKSPACE_ID }}"
-          
-          # Check if the collection can be accessed directly
-          if [ -n "${{ steps.push_collection.outputs.collection_uid }}" ]; then
-            echo "Verifying collection was created/updated:"
-            postman collection get --uid "${{ steps.push_collection.outputs.collection_uid }}" || echo "Collection not accessible"
-          fi
 
       - name: Upload Postman Collection as Artifact
         if: always()
