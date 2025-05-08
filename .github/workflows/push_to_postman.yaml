@@ -45,6 +45,9 @@ jobs:
       - name: Log in to Postman CLI
         run: postman login --with-api-key "${{ secrets.POSTMAN_API_KEY }}"
 
+      - name: List Collections before Push
+        run: postman collection list
+
       - name: Push Collection to Postman Workspace
         env:
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
@@ -61,6 +64,9 @@ jobs:
             echo "Updating existing collection..."
             postman collection update --uid "$POSTMAN_COLLECTION_UID" --file "$COLLECTION_FILE_PATH"
           fi
+      
+      - name: List Collections after Push
+        run: postman collection list
 
       - name: Upload Postman Collection as Artifact
         if: always()
