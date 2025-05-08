@@ -3,7 +3,7 @@ name: Generate and Push Postman Collection
 on:
   push:
     branches:
-      - main 
+      - main
     paths:
       - 'cloudformation/openapi.yaml'
       - '.github/workflows/push_to_postman.yaml'
@@ -32,8 +32,20 @@ jobs:
         run: |
           INPUT_OAS_FILE="cloudformation/openapi.yaml"
           OUTPUT_COLLECTION_FILE="postman_collection.json"
+          
+          # Ensure the OpenAPI file exists
+          if [ ! -f "$INPUT_OAS_FILE" ]; then
+            echo "Error: OpenAPI file not found at $INPUT_OAS_FILE"
+            ls -la cloudformation/
+            exit 1
+          fi
+          
           openapi2postmanv2 -s "${INPUT_OAS_FILE}" -o "${OUTPUT_COLLECTION_FILE}" -p
           echo "collection_file=${OUTPUT_COLLECTION_FILE}" >> $GITHUB_OUTPUT
+          
+          # Display the generated collection for debugging
+          echo "Generated collection content:"
+          cat "${OUTPUT_COLLECTION_FILE}" | jq '.info'
 
       - name: Install Postman CLI
         run: |
@@ -45,28 +57,57 @@ jobs:
       - name: Log in to Postman CLI
         run: postman login --with-api-key "${{ secrets.POSTMAN_API_KEY }}"
 
+      - name: List Workspaces
+        run: |
+          echo "Available Workspaces:"
+          postman workspace list
+          
+          # Verify the workspace ID exists
+          postman workspace get --workspace "${{ secrets.POSTMAN_WORKSPACE_ID }}" || (echo "Workspace ID not found or not accessible" && exit 1)
+
       - name: List Collections before Push
-        run: postman collection list
+        run: |
+          echo "Collections in workspace before push:"
+          postman collection list --workspace "${{ secrets.POSTMAN_WORKSPACE_ID }}"
 
       - name: Push Collection to Postman Workspace
+        id: push_collection
         env:
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
           POSTMAN_COLLECTION_UID: ${{ secrets.POSTMAN_COLLECTION_UID }}
           COLLECTION_FILE_PATH: ${{ steps.generate_collection.outputs.collection_file }}
+          COLLECTION_NAME: "API Collection" # Set a specific name for your collection
         run: |
           echo "Workspace ID: $POSTMAN_WORKSPACE_ID"
           echo "Collection File Path: $COLLECTION_FILE_PATH"
-          
-          if [ -z "$POSTMAN_COLLECTION_UID" ]; then
+          echo "Collection Name: $COLLECTION_NAME"
+
+          if [ -z "$POSTMAN_COLLECTION_UID" ] || [ "$POSTMAN_COLLECTION_UID" = "null" ]; then
             echo "Creating a new collection..."
-            postman collection create --file "$COLLECTION_FILE_PATH" --workspace "$POSTMAN_WORKSPACE_ID" --name "My Collection"
+            RESULT=$(postman collection create --file "$COLLECTION_FILE_PATH" --workspace "$POSTMAN_WORKSPACE_ID" --name "$COLLECTION_NAME")
+            echo "Create Result: $RESULT"
+            
+            # Extract the collection UID from the result (format may vary)
+            COLLECTION_UID=$(echo "$RESULT" | grep -oP 'Collection created with UID: \K[a-zA-Z0-9-]+' || echo "")
+            echo "Created collection UID: $COLLECTION_UID"
+            echo "collection_uid=$COLLECTION_UID" >> $GITHUB_OUTPUT
           else
-            echo "Updating existing collection..."
-            postman collection update --uid "$POSTMAN_COLLECTION_UID" --file "$COLLECTION_FILE_PATH"
+            echo "Updating existing collection with UID: $POSTMAN_COLLECTION_UID"
+            RESULT=$(postman collection update --uid "$POSTMAN_COLLECTION_UID" --file "$COLLECTION_FILE_PATH")
+            echo "Update Result: $RESULT"
+            echo "collection_uid=$POSTMAN_COLLECTION_UID" >> $GITHUB_OUTPUT
           fi
-      
+
       - name: List Collections after Push
-        run: postman collection list
+        run: |
+          echo "Collections in workspace after push:"
+          postman collection list --workspace "${{ secrets.POSTMAN_WORKSPACE_ID }}"
+          
+          # Check if the collection can be accessed directly
+          if [ -n "${{ steps.push_collection.outputs.collection_uid }}" ]; then
+            echo "Verifying collection was created/updated:"
+            postman collection get --uid "${{ steps.push_collection.outputs.collection_uid }}" || echo "Collection not accessible"
+          fi
 
       - name: Upload Postman Collection as Artifact
         if: always()
