@@ -55,9 +55,9 @@ jobs:
           INPUT_OAS_FILE="cloudformation/openapi.yaml"
           OUTPUT_COLLECTION_FILE="postman_collection.json"
           
-          # Run conversion with debug flag
+          # Run conversion (removed the unsupported -d flag)
           echo "Running OpenAPI to Postman conversion..."
-          openapi2postmanv2 -s "${INPUT_OAS_FILE}" -o "${OUTPUT_COLLECTION_FILE}" -p -d
+          openapi2postmanv2 -s "${INPUT_OAS_FILE}" -o "${OUTPUT_COLLECTION_FILE}" -p
           
           # Check if conversion was successful
           if [ ! -f "$OUTPUT_COLLECTION_FILE" ]; then
