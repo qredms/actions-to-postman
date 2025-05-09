@@ -49,13 +49,12 @@ jobs:
       - name: Install openapi-to-postmanv2
         run: npm install -g openapi-to-postmanv2
 
-      - name: Test OpenAPI conversion
+      - name: Generate Postman Collection
         id: generate_collection
         run: |
           INPUT_OAS_FILE="cloudformation/openapi.yaml"
           OUTPUT_COLLECTION_FILE="postman_collection.json"
           
-          # Run conversion (removed the unsupported -d flag)
           echo "Running OpenAPI to Postman conversion..."
           openapi2postmanv2 -s "${INPUT_OAS_FILE}" -o "${OUTPUT_COLLECTION_FILE}" -p
           
@@ -97,24 +96,26 @@ jobs:
           echo "Logging in to Postman CLI..."
           postman login --with-api-key "${{ secrets.POSTMAN_API_KEY }}"
 
-      - name: List Workspaces
-        run: |
-          echo "Available Workspaces:"
-          postman workspace list
-
-      - name: Create New Collection
-        id: push_collection
+      - name: Update Existing Postman Collection
+        id: update_collection
         env:
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
+          POSTMAN_COLLECTION_UID: ${{ secrets.POSTMAN_COLLECTION_UID }}
           COLLECTION_FILE_PATH: ${{ steps.generate_collection.outputs.collection_file }}
         run: |
-          # Validate workspace ID
+          # Validate required secrets
           if [ -z "$POSTMAN_WORKSPACE_ID" ]; then
             echo "Error: POSTMAN_WORKSPACE_ID secret is not set"
             exit 1
           fi
           
+          if [ -z "$POSTMAN_COLLECTION_UID" ]; then
+            echo "Error: POSTMAN_COLLECTION_UID secret is not set"
+            exit 1
+          fi
+          
           echo "Workspace ID: $POSTMAN_WORKSPACE_ID"
+          echo "Collection UID: $POSTMAN_COLLECTION_UID"
           echo "Collection File Path: $COLLECTION_FILE_PATH"
           
           # Verify collection file exists
@@ -128,36 +129,21 @@ jobs:
           FILE_SIZE=$(stat -c%s "$COLLECTION_FILE_PATH")
           echo "Collection file size: $FILE_SIZE bytes"
           
-          # Always create a new collection with timestamp
-          TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          COLLECTION_NAME="API Collection ${TIMESTAMP}"
-          
-          echo "Creating new collection: $COLLECTION_NAME"
-          RESULT=$(postman collection create --file "$COLLECTION_FILE_PATH" --workspace "$POSTMAN_WORKSPACE_ID" --name "$COLLECTION_NAME")
+          echo "Updating existing collection with UID: $POSTMAN_COLLECTION_UID"
+          RESULT=$(postman collection update "$POSTMAN_COLLECTION_UID" --file "$COLLECTION_FILE_PATH")
           
           # Check if command was successful
           if [ $? -ne 0 ]; then
-            echo "Error: Failed to create collection in Postman"
+            echo "Error: Failed to update collection in Postman"
             echo "Result output: $RESULT"
             exit 1
           fi
           
-          echo "Create Result: $RESULT"
-          
-          # Extract the collection UID from the result
-          COLLECTION_UID=$(echo "$RESULT" | grep -oP 'Collection created with UID: \K[a-zA-Z0-9-]+' || echo "")
-          if [ -n "$COLLECTION_UID" ]; then
-            echo "Created collection UID: $COLLECTION_UID"
-            echo "collection_uid=$COLLECTION_UID" >> $GITHUB_OUTPUT
-          else
-            echo "Warning: Could not extract collection UID from result"
-            echo "Full result output:"
-            echo "$RESULT"
-          fi
+          echo "Update Result: $RESULT"
 
-      - name: List Collections after Push
+      - name: List Collections after Update
         run: |
-          echo "Collections in workspace after push:"
+          echo "Collections in workspace after update:"
           postman collection list --workspace "${{ secrets.POSTMAN_WORKSPACE_ID }}"
 
       - name: Upload Postman Collection as Artifact
