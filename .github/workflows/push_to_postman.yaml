@@ -55,73 +55,31 @@ jobs:
           INPUT_OAS_FILE="cloudformation/openapi.yaml"
           OUTPUT_COLLECTION_FILE="postman_collection.json"
           
-          # Run conversion with standard options (no debug flag)
+          # Run conversion with debug flag
           echo "Running OpenAPI to Postman conversion..."
-          openapi2postmanv2 -s "${INPUT_OAS_FILE}" -o "${OUTPUT_COLLECTION_FILE}" -p
+          openapi2postmanv2 -s "${INPUT_OAS_FILE}" -o "${OUTPUT_COLLECTION_FILE}" -p -d
           
           # Check if conversion was successful
           if [ ! -f "$OUTPUT_COLLECTION_FILE" ]; then
             echo "Error: Conversion failed to generate output file"
-            # Create a minimal collection to prevent workflow failure
-            echo '{"info":{"name":"API Collection","schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},"item":[{"name":"Example Endpoint","request":{"method":"GET","url":{"raw":"https://example.com/api","protocol":"https","host":["example","com"],"path":["api"]}}}]}' > "$OUTPUT_COLLECTION_FILE"
+            echo "Listing contents of current directory to debug:"
+            ls -la
+            exit 1
           fi
           
           # Check generated file size
           FILE_SIZE=$(stat -c%s "$OUTPUT_COLLECTION_FILE")
           echo "Generated collection file size: $FILE_SIZE bytes"
           
-          echo "collection_file=${OUTPUT_COLLECTION_FILE}" >> $GITHUB_OUTPUT
-
-      - name: Create sample collection if needed
-        run: |
-          OUTPUT_COLLECTION_FILE="postman_collection.json"
-          
-          # Check if file exists and has content
-          if [ ! -s "$OUTPUT_COLLECTION_FILE" ]; then
-            echo "Creating a sample collection with test endpoints..."
-            cat > "$OUTPUT_COLLECTION_FILE" << EOL
-          {
-            "info": {
-              "name": "API Collection",
-              "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
-            },
-            "item": [
-              {
-                "name": "Test Endpoint",
-                "request": {
-                  "method": "GET",
-                  "url": {
-                    "raw": "https://example.com/api/test",
-                    "protocol": "https",
-                    "host": ["example", "com"],
-                    "path": ["api", "test"]
-                  }
-                },
-                "response": []
-              },
-              {
-                "name": "Another Test Endpoint",
-                "request": {
-                  "method": "POST",
-                  "url": {
-                    "raw": "https://example.com/api/submit",
-                    "protocol": "https",
-                    "host": ["example", "com"],
-                    "path": ["api", "submit"]
-                  },
-                  "body": {
-                    "mode": "raw",
-                    "raw": "{\n  \"key\": \"value\"\n}",
-                    "options": { "raw": { "language": "json" } }
-                  }
-                },
-                "response": []
-              }
-            ]
-          }
-          EOL
-            echo "Created a sample collection with test endpoints"
+          # Validate the JSON format
+          if ! jq empty "$OUTPUT_COLLECTION_FILE" 2>/dev/null; then
+            echo "Error: Generated collection is not valid JSON!"
+            echo "First 100 characters of the file:"
+            head -c 100 "$OUTPUT_COLLECTION_FILE"
+            exit 1
           fi
+          
+          echo "collection_file=${OUTPUT_COLLECTION_FILE}" >> $GITHUB_OUTPUT
 
       - name: Install Postman CLI
         run: |
@@ -131,7 +89,13 @@ jobs:
           postman --version
 
       - name: Log in to Postman CLI
-        run: postman login --with-api-key "${{ secrets.POSTMAN_API_KEY }}"
+        run: |
+          if [ -z "${{ secrets.POSTMAN_API_KEY }}" ]; then
+            echo "Error: POSTMAN_API_KEY secret is not set"
+            exit 1
+          fi
+          echo "Logging in to Postman CLI..."
+          postman login --with-api-key "${{ secrets.POSTMAN_API_KEY }}"
 
       - name: List Workspaces
         run: |
@@ -144,8 +108,25 @@ jobs:
           POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
           COLLECTION_FILE_PATH: ${{ steps.generate_collection.outputs.collection_file }}
         run: |
+          # Validate workspace ID
+          if [ -z "$POSTMAN_WORKSPACE_ID" ]; then
+            echo "Error: POSTMAN_WORKSPACE_ID secret is not set"
+            exit 1
+          fi
+          
           echo "Workspace ID: $POSTMAN_WORKSPACE_ID"
           echo "Collection File Path: $COLLECTION_FILE_PATH"
+          
+          # Verify collection file exists
+          if [ ! -f "$COLLECTION_FILE_PATH" ]; then
+            echo "Error: Collection file does not exist at $COLLECTION_FILE_PATH"
+            ls -la
+            exit 1
+          fi
+          
+          # Show collection file size
+          FILE_SIZE=$(stat -c%s "$COLLECTION_FILE_PATH")
+          echo "Collection file size: $FILE_SIZE bytes"
           
           # Always create a new collection with timestamp
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
@@ -153,13 +134,25 @@ jobs:
           
           echo "Creating new collection: $COLLECTION_NAME"
           RESULT=$(postman collection create --file "$COLLECTION_FILE_PATH" --workspace "$POSTMAN_WORKSPACE_ID" --name "$COLLECTION_NAME")
+          
+          # Check if command was successful
+          if [ $? -ne 0 ]; then
+            echo "Error: Failed to create collection in Postman"
+            echo "Result output: $RESULT"
+            exit 1
+          fi
+          
           echo "Create Result: $RESULT"
           
-          # Extract the collection UID from the result if possible
+          # Extract the collection UID from the result
           COLLECTION_UID=$(echo "$RESULT" | grep -oP 'Collection created with UID: \K[a-zA-Z0-9-]+' || echo "")
           if [ -n "$COLLECTION_UID" ]; then
             echo "Created collection UID: $COLLECTION_UID"
             echo "collection_uid=$COLLECTION_UID" >> $GITHUB_OUTPUT
+          else
+            echo "Warning: Could not extract collection UID from result"
+            echo "Full result output:"
+            echo "$RESULT"
           fi
 
       - name: List Collections after Push
