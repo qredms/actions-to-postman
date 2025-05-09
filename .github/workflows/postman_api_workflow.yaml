@@ -22,7 +22,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
@@ -166,73 +166,6 @@ jobs:
             echo "collection_uid=$collection_uid" >> $GITHUB_OUTPUT
           else
             echo "Error updating Postman collection. Status: $http_status"
-            exit 1
-          fi
-
-      - name: Create New Collection if Update Failed
-        id: create_collection
-        if: ${{ failure() && steps.update_collection.conclusion == 'failure' }}
-        env:
-          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
-          POSTMAN_WORKSPACE_ID: ${{ secrets.POSTMAN_WORKSPACE_ID }}
-          API_PAYLOAD_FILE: ${{ steps.prepare_collection.outputs.api_payload_file }}
-        run: |
-          # Validate required secrets
-          if [ -z "$POSTMAN_API_KEY" ]; then
-            echo "Error: POSTMAN_API_KEY secret is not set"
-            exit 1
-          fi
-          
-          if [ -z "$POSTMAN_WORKSPACE_ID" ]; then
-            echo "Error: POSTMAN_WORKSPACE_ID secret is not set"
-            exit 1
-          fi
-          
-          echo "Workspace ID: $POSTMAN_WORKSPACE_ID"
-          
-          # Verify API payload file exists
-          if [ ! -f "$API_PAYLOAD_FILE" ]; then
-            echo "Error: API payload file does not exist at $API_PAYLOAD_FILE"
-            ls -la
-            exit 1
-          fi
-          
-          # API endpoint for creating a collection within a workspace
-          API_URL="https://api.getpostman.com/collections?workspace=$POSTMAN_WORKSPACE_ID"
-          
-          echo "Creating new collection via API at: $API_URL"
-          
-          # Create a compact version of the JSON payload for curl
-          JSON_PAYLOAD=$(jq -c . "$API_PAYLOAD_FILE")
-          
-          # Create collection via API
-          response=$(curl --location --request POST "$API_URL" \
-            --header "X-Api-Key: $POSTMAN_API_KEY" \
-            --header "Content-Type: application/json" \
-            --data "$JSON_PAYLOAD" \
-            --silent --write-out "HTTPSTATUS:%{http_code}")
-            
-          # Extract HTTP status
-          http_status=$(echo "$response" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
-          # Extract body
-          body=$(echo "$response" | sed -e 's/HTTPSTATUS:.*//')
-          
-          echo "Response Body: $body"
-          echo "HTTP Status: $http_status"
-          
-          if [ "$http_status" -eq 200 ] || [ "$http_status" -eq 201 ]; then
-            echo "New Postman collection created successfully."
-            
-            # Extract and store the collection UID from response
-            collection_uid=$(echo "$body" | jq -r '.collection.uid')
-            echo "New Collection UID: $collection_uid"
-            echo "collection_uid=$collection_uid" >> $GITHUB_OUTPUT
-            
-            echo "============================================="
-            echo "IMPORTANT: Update your POSTMAN_COLLECTION_UID repository secret with the new UID: $collection_uid"
-            echo "============================================="
-          else
-            echo "Error creating Postman collection. Status: $http_status"
             exit 1
           fi
 
