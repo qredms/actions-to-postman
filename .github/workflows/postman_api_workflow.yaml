@@ -91,8 +91,8 @@ jobs:
             exit 1
           fi
           
-          # Add folder structure to the collection JSON
-          jq '.item = [{"name": "Card Team", "item": [{"name": "Async", "item": [{"name": "Test", "item": .item}]}]}]' "$COLLECTION_FILE" > "postman_api_payload.json"
+          # Properly wrap the collection JSON in a 'collection' key
+          jq '{"collection": .}' "$COLLECTION_FILE" > "postman_api_payload.json"
           
           # Validate the resulting JSON
           if ! jq empty "postman_api_payload.json" 2>/dev/null; then
