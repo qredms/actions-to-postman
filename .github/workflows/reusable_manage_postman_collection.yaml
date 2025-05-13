@@ -1,0 +1,270 @@
+name: Reusable Postman Collection Management
+
+on:
+  workflow_call:
+    inputs:
+      collection_name:
+        description: 'Name of the Postman collection'
+        required: true
+        type: string
+      folder_structure:
+        description: 'Desired folder structure (e.g., "TeamA/ProjectB/ModuleC"). Leave empty for root.'
+        required: false
+        type: string
+        default: ''
+      openapi_file_path:
+        description: 'Path to the OpenAPI specification file'
+        required: true
+        type: string
+    secrets:
+      postman_api_key:
+        description: 'Postman API Key'
+        required: true
+      postman_workspace_id:
+        description: 'Postman Workspace ID'
+        required: true
+    outputs:
+      collection_uid:
+        description: 'The UID of the created or updated Postman collection'
+        value: ${{ jobs.manage_collection.outputs.collection_uid }}
+      collection_url:
+        description: 'The URL of the created or updated Postman collection'
+        value: ${{ jobs.manage_collection.outputs.collection_url }}
+
+jobs:
+  manage_collection:
+    runs-on: ubuntu-latest
+    outputs:
+      collection_uid: ${{ steps.set_final_outputs.outputs.collection_uid }}
+      collection_url: ${{ steps.set_final_outputs.outputs.collection_url }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Validate OpenAPI file
+        run: |
+          INPUT_OAS_FILE="${{ inputs.openapi_file_path }}"
+          if [ ! -f "$INPUT_OAS_FILE" ]; then
+            echo "Error: OpenAPI file not found at $INPUT_OAS_FILE"
+            exit 1
+          fi
+          echo "OpenAPI file $INPUT_OAS_FILE found."
+
+      - name: Install openapi-to-postmanv2
+        run: npm install -g openapi-to-postmanv2
+
+      - name: Generate Postman Collection from OpenAPI
+        id: generate_collection
+        run: |
+          INPUT_OAS_FILE="${{ inputs.openapi_file_path }}"
+          OUTPUT_COLLECTION_FILE="generated_postman_collection.json"
+          echo "Running OpenAPI to Postman conversion for $INPUT_OAS_FILE..."
+          openapi2postmanv2 -s "$INPUT_OAS_FILE" -o "$OUTPUT_COLLECTION_FILE" -p
+          
+          if [ ! -f "$OUTPUT_COLLECTION_FILE" ]; then
+            echo "Error: Conversion failed to generate output file $OUTPUT_COLLECTION_FILE"
+            exit 1
+          fi
+          if ! jq empty "$OUTPUT_COLLECTION_FILE" 2>/dev/null; then
+            echo "Error: Generated collection $OUTPUT_COLLECTION_FILE is not valid JSON!"
+            head -c 200 "$OUTPUT_COLLECTION_FILE"
+            exit 1
+          fi
+          echo "Generated Postman collection: $OUTPUT_COLLECTION_FILE"
+          echo "generated_collection_path=$OUTPUT_COLLECTION_FILE" >> $GITHUB_OUTPUT
+
+      - name: Prepare Collection JSON for API Request
+        id: prepare_api_payload
+        run: |
+          GENERATED_COLLECTION_FILE="${{ steps.generate_collection.outputs.generated_collection_path }}"
+          COLLECTION_NAME="${{ inputs.collection_name }}"
+          FOLDER_STRUCTURE="${{ inputs.folder_structure }}"
+          API_PAYLOAD_FILE="postman_api_payload.json"
+          TEMP_COLLECTION_FILE="temp_collection_for_api.json"
+
+          # Function to generate the new item structure based on folder_structure
+          generate_nested_items() {
+            local items_json_str="$1"
+            local structure="$2"
+
+            if [ -z "$structure" ] || [ "$structure" == "\"\"" ] || [ "$structure" == "''" ]; then
+              echo "$items_json_str" # Return original items if no folder structure
+              return
+            fi
+
+            local current_nested_json="$items_json_str"
+            local temp_folders=()
+            IFS='/' read -r -a temp_folders <<< "$structure"
+
+            for (( i=${#temp_folders[@]}-1; i>=0; i-- )); do
+              folder_name="${temp_folders[$i]}"
+              # Escape double quotes in folder name for JSON string
+              escaped_folder_name=$(echo "$folder_name" | sed 's/"/\\"/g')
+              current_nested_json="[{\"name\": \"$escaped_folder_name\", \"item\": $current_nested_json}]"
+            done
+            echo "$current_nested_json"
+          }
+
+          ORIGINAL_ITEMS_JSON=$(jq '.item // []' "$GENERATED_COLLECTION_FILE")
+
+          NESTED_ITEMS_JSON=$(generate_nested_items "$ORIGINAL_ITEMS_JSON" "$FOLDER_STRUCTURE")
+
+          jq --arg collection_name "$COLLECTION_NAME" \
+             --argjson new_items "$NESTED_ITEMS_JSON" \
+             '.info.name = $collection_name | .item = $new_items' \
+             "$GENERATED_COLLECTION_FILE" > "$TEMP_COLLECTION_FILE"
+          
+          jq '{"collection": .}' "$TEMP_COLLECTION_FILE" > "$API_PAYLOAD_FILE"
+
+          if ! jq empty "$API_PAYLOAD_FILE" 2>/dev/null; then
+            echo "Error: API payload '$API_PAYLOAD_FILE' is not valid JSON!"
+            exit 1
+          fi
+          echo "Prepared API payload file: $API_PAYLOAD_FILE"
+          echo "api_payload_path=$API_PAYLOAD_FILE" >> $GITHUB_OUTPUT
+
+      - name: Determine Action (Check if Collection Exists by Name)
+        id: determine_action
+        env:
+          POSTMAN_API_KEY: ${{ secrets.postman_api_key }}
+          POSTMAN_WORKSPACE_ID: ${{ secrets.postman_workspace_id }}
+          COLLECTION_NAME_INPUT: ${{ inputs.collection_name }}
+        run: |
+          echo "action=create" >> $GITHUB_OUTPUT # Default to create
+          echo "target_collection_uid=" >> $GITHUB_ENV 
+
+          echo "Listing collections in workspace ${{ secrets.postman_workspace_id }} to find if '${{ inputs.collection_name }}' exists..."
+          API_URL="https://api.getpostman.com/collections?workspace=${{ secrets.postman_workspace_id }}"
+          
+          response=$(curl --location --request GET "$API_URL" \
+            --header "X-Api-Key: $POSTMAN_API_KEY" \
+            --silent --write-out "HTTPSTATUS:%{http_code}")
+          
+          http_status=$(echo "$response" | tr -d '\\n' | sed -e 's/.*HTTPSTATUS://')
+          body=$(echo "$response" | sed -e 's/HTTPSTATUS:.*//')
+          
+          echo "List Collections Response Body (first 500 chars): $(echo "$body" | head -c 500)"
+          echo "List Collections HTTP Status: $http_status"
+          
+          if [ "$http_status" -ne 200 ]; then
+            echo "Error listing collections. Status: $http_status."
+            echo "Proceeding to create a new collection due to an error fetching existing collections."
+            # Keep action=create and target_collection_uid empty
+            exit 0
+          fi
+
+          EXISTING_COLLECTION_UID=$(echo "$body" | jq -r --arg name "$COLLECTION_NAME_INPUT" '.collections[] | select(.name == $name) | .id' | head -n 1)
+          
+          if [ -n "$EXISTING_COLLECTION_UID" ] && [ "$EXISTING_COLLECTION_UID" != "null" ]; then
+            echo "Collection named '$COLLECTION_NAME_INPUT' found with UID: $EXISTING_COLLECTION_UID. Will update."
+            echo "action=update" >> $GITHUB_OUTPUT
+            echo "target_collection_uid=$EXISTING_COLLECTION_UID" >> $GITHUB_ENV
+          else
+            echo "No collection named '$COLLECTION_NAME_INPUT' found in workspace. Will create a new one."
+            # action remains create (default) and target_collection_uid remains empty
+          fi
+      
+      - name: Update Existing Collection
+        id: update_collection_step
+        if: steps.determine_action.outputs.action == 'update'
+        env:
+          POSTMAN_API_KEY: ${{ secrets.postman_api_key }}
+          TARGET_COLLECTION_UID: ${{ env.target_collection_uid }}
+          API_PAYLOAD_FILE: ${{ steps.prepare_api_payload.outputs.api_payload_path }}
+        run: |
+          echo "Updating existing collection with UID: $TARGET_COLLECTION_UID"
+          API_URL="https://api.getpostman.com/collections/$TARGET_COLLECTION_UID"
+          JSON_PAYLOAD=$(cat "$API_PAYLOAD_FILE")
+          
+          response=$(curl --location --request PUT "$API_URL" \
+            --header "X-Api-Key: $POSTMAN_API_KEY" \
+            --header "Content-Type: application/json" \
+            --data "$JSON_PAYLOAD" \
+            --silent --write-out "HTTPSTATUS:%{http_code}")
+          
+          http_status=$(echo "$response" | tr -d '\\n' | sed -e 's/.*HTTPSTATUS://')
+          body=$(echo "$response" | sed -e 's/HTTPSTATUS:.*//')
+          echo "Update Response Body: $body"
+          echo "Update HTTP Status: $http_status"
+
+          if [ "$http_status" -eq 200 ] || [ "$http_status" -eq 201 ]; then
+            echo "Postman collection updated successfully."
+            updated_uid=$(echo "$body" | jq -r '.collection.uid')
+            echo "collection_uid_output=$updated_uid" >> $GITHUB_OUTPUT
+          else
+            echo "Error updating Postman collection. Status: $http_status. Body: $body"
+            # If update fails, maybe we should try to create? Or just fail. For now, fail.
+            exit 1
+          fi
+
+      - name: Create New Collection
+        id: create_collection_step
+        if: steps.determine_action.outputs.action == 'create'
+        env:
+          POSTMAN_API_KEY: ${{ secrets.postman_api_key }}
+          POSTMAN_WORKSPACE_ID: ${{ secrets.postman_workspace_id }}
+          API_PAYLOAD_FILE: ${{ steps.prepare_api_payload.outputs.api_payload_path }}
+        run: |
+          echo "Creating new collection..."
+          API_URL="https://api.getpostman.com/collections?workspace=$POSTMAN_WORKSPACE_ID"
+          JSON_PAYLOAD=$(cat "$API_PAYLOAD_FILE")
+
+          response=$(curl --location --request POST "$API_URL" \
+            --header "X-Api-Key: $POSTMAN_API_KEY" \
+            --header "Content-Type: application/json" \
+            --data "$JSON_PAYLOAD" \
+            --silent --write-out "HTTPSTATUS:%{http_code}")
+
+          http_status=$(echo "$response" | tr -d '\\n' | sed -e 's/.*HTTPSTATUS://')
+          body=$(echo "$response" | sed -e 's/HTTPSTATUS:.*//')
+          echo "Create Response Body: $body"
+          echo "Create HTTP Status: $http_status"
+
+          if [ "$http_status" -eq 200 ] || [ "$http_status" -eq 201 ]; then
+            echo "New Postman collection created successfully."
+            created_uid=$(echo "$body" | jq -r '.collection.uid')
+            echo "collection_uid_output=$created_uid" >> $GITHUB_OUTPUT
+            echo "IMPORTANT: If this was an initial run, store this UID for future updates: $created_uid"
+          else
+            echo "Error creating Postman collection. Status: $http_status. Body: $body"
+            exit 1
+          fi
+          
+      - name: Set Final Outputs
+        id: set_final_outputs
+        run: |
+          FINAL_COLLECTION_UID=""
+          ACTION="${{ steps.determine_action.outputs.action }}"
+          if [ "$ACTION" == "update" ]; then
+            FINAL_COLLECTION_UID="${{ steps.update_collection_step.outputs.collection_uid_output }}"
+          elif [ "$ACTION" == "create" ]; then
+            FINAL_COLLECTION_UID="${{ steps.create_collection_step.outputs.collection_uid_output }}"
+          fi
+          
+          echo "Final Collection UID determined: $FINAL_COLLECTION_UID"
+          echo "collection_uid=$FINAL_COLLECTION_UID" >> $GITHUB_OUTPUT
+          
+          if [ -n "$FINAL_COLLECTION_UID" ] && [ "$FINAL_COLLECTION_UID" != "null" ]; then
+            COLLECTION_URL="https://web.postman.co/workspace/${{ secrets.postman_workspace_id }}/collection/$FINAL_COLLECTION_UID"
+            echo "collection_url=$COLLECTION_URL" >> $GITHUB_OUTPUT
+            echo "Postman Collection URL: $COLLECTION_URL"
+          else
+            echo "collection_url=" >> $GITHUB_OUTPUT
+            echo "Warning: Final Collection UID is empty or null."
+          fi
+
+      - name: Upload Postman API Payload as Artifact
+        if: always() # Upload artifact even if previous steps fail, for debugging
+        uses: actions/upload-artifact@v4
+        with:
+          name: postman-api-payload
+          path: ${{ steps.prepare_api_payload.outputs.api_payload_path }}
+          retention-days: 7
