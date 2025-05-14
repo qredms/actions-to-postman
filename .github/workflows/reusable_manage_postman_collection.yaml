@@ -87,18 +87,26 @@ jobs:
           GENERATED_COLLECTION_FILE="${{ steps.generate_collection.outputs.generated_collection_path }}"
           TEAM_NAME_INPUT="${{ inputs.team_name }}"
           PROJECT_INPUT="${{ inputs.project }}"
-          FOLDER_STRUCTURE="$PROJECT_INPUT" # Used by generate_nested_items
           API_PAYLOAD_FILE="postman_api_payload.json"
           TEMP_COLLECTION_FILE="temp_collection_for_api.json"
 
+          # Determine EFFECTIVE_COLLECTION_NAME (for info.name of the collection entity)
           if [ -n "$PROJECT_INPUT" ] && [ "$PROJECT_INPUT" != "\"\"" ] && [ "$PROJECT_INPUT" != "''" ]; then
             EFFECTIVE_COLLECTION_NAME="$TEAM_NAME_INPUT - $PROJECT_INPUT"
           else
             EFFECTIVE_COLLECTION_NAME="$TEAM_NAME_INPUT"
           fi
-          echo "Effective Collection Name for API Payload: $EFFECTIVE_COLLECTION_NAME"
+          echo "Effective Collection Name for API Payload (info.name): $EFFECTIVE_COLLECTION_NAME"
 
-          # Function to generate the new item structure based on project
+          # Determine HIERARCHICAL_FOLDER_PATH (for internal folder structure)
+          if [ -n "$PROJECT_INPUT" ] && [ "$PROJECT_INPUT" != "\"\"" ] && [ "$PROJECT_INPUT" != "''" ]; then
+            HIERARCHICAL_FOLDER_PATH="$TEAM_NAME_INPUT/$PROJECT_INPUT"
+          else
+            HIERARCHICAL_FOLDER_PATH="$TEAM_NAME_INPUT"
+          fi
+          echo "Hierarchical folder path for internal nesting: $HIERARCHICAL_FOLDER_PATH"
+
+          # Function to generate the new item structure based on the hierarchical path
           generate_nested_items() {
             local items_json_str="$1"
             local structure="$2"
@@ -122,8 +130,10 @@ jobs:
           }
 
           ORIGINAL_ITEMS_JSON=$(jq '.item // []' "$GENERATED_COLLECTION_FILE")
-          NESTED_ITEMS_JSON=$(generate_nested_items "$ORIGINAL_ITEMS_JSON" "$FOLDER_STRUCTURE")
+          # Use HIERARCHICAL_FOLDER_PATH for nesting
+          NESTED_ITEMS_JSON=$(generate_nested_items "$ORIGINAL_ITEMS_JSON" "$HIERARCHICAL_FOLDER_PATH")
 
+          # Use EFFECTIVE_COLLECTION_NAME for .info.name and NESTED_ITEMS_JSON for .item
           jq --arg collection_name "$EFFECTIVE_COLLECTION_NAME" \
              --argjson new_items "$NESTED_ITEMS_JSON" \
              '.info.name = $collection_name | .item = $new_items' \
