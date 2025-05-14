@@ -7,7 +7,7 @@ on:
         description: 'Team name for the Postman collection'
         required: true
         type: string
-      project::
+      project:
         description: 'Desired folder structure (e.g., "Github Actions/Auto Generated"). Leave empty for root.'
         required: false
         type: string
