@@ -140,8 +140,6 @@ jobs:
         env:
           POSTMAN_API_KEY: ${{ secrets.postman_api_key }}
           TARGET_COLLECTION_UID: ${{ env.target_collection_uid }}
-        outputs:
-          existing_collection_path: existing_team_collection.json
         run: |
           echo "Fetching existing team collection with UID: $TARGET_COLLECTION_UID"
           API_URL="https://api.getpostman.com/collections/$TARGET_COLLECTION_UID"
@@ -312,19 +310,3 @@ jobs:
           echo "Final Collection UID determined: $FINAL_COLLECTION_UID"
           echo "collection_uid=$FINAL_COLLECTION_UID" >> $GITHUB_OUTPUT
           
-          if [ -n "$FINAL_COLLECTION_UID" ] && [ "$FINAL_COLLECTION_UID" != "null" ]; then
-            COLLECTION_URL="https://web.postman.co/workspace/${{ secrets.postman_workspace_id }}/collection/$FINAL_COLLECTION_UID"
-            echo "collection_url=$COLLECTION_URL" >> $GITHUB_OUTPUT
-            echo "Postman Collection URL: $COLLECTION_URL"
-          else
-            echo "collection_url=" >> $GITHUB_OUTPUT
-            echo "Warning: Final Collection UID is empty or null."
-          fi
-
-      - name: Upload Postman API Payload as Artifact
-        if: always() # Upload artifact even if previous steps fail, for debugging
-        uses: actions/upload-artifact@v4
-        with:
-          name: postman-api-payload
-          path: ${{ steps.prepare_api_payload.outputs.api_payload_path }}
-          retention-days: 7
