@@ -85,10 +85,18 @@ jobs:
         id: prepare_api_payload
         run: |
           GENERATED_COLLECTION_FILE="${{ steps.generate_collection.outputs.generated_collection_path }}"
-          COLLECTION_NAME="${{ inputs.team_name }}"
-          FOLDER_STRUCTURE="${{ inputs.project }}"
+          TEAM_NAME_INPUT="${{ inputs.team_name }}"
+          PROJECT_INPUT="${{ inputs.project }}"
+          FOLDER_STRUCTURE="$PROJECT_INPUT" # Used by generate_nested_items
           API_PAYLOAD_FILE="postman_api_payload.json"
           TEMP_COLLECTION_FILE="temp_collection_for_api.json"
+
+          if [ -n "$PROJECT_INPUT" ] && [ "$PROJECT_INPUT" != "\"\"" ] && [ "$PROJECT_INPUT" != "''" ]; then
+            EFFECTIVE_COLLECTION_NAME="$TEAM_NAME_INPUT - $PROJECT_INPUT"
+          else
+            EFFECTIVE_COLLECTION_NAME="$TEAM_NAME_INPUT"
+          fi
+          echo "Effective Collection Name for API Payload: $EFFECTIVE_COLLECTION_NAME"
 
           # Function to generate the new item structure based on project
           generate_nested_items() {
@@ -114,12 +122,11 @@ jobs:
           }
 
           ORIGINAL_ITEMS_JSON=$(jq '.item // []' "$GENERATED_COLLECTION_FILE")
-
           NESTED_ITEMS_JSON=$(generate_nested_items "$ORIGINAL_ITEMS_JSON" "$FOLDER_STRUCTURE")
 
-          jq --arg team_name "$COLLECTION_NAME" \
+          jq --arg collection_name "$EFFECTIVE_COLLECTION_NAME" \
              --argjson new_items "$NESTED_ITEMS_JSON" \
-             '.info.name = $team_name | .item = $new_items' \
+             '.info.name = $collection_name | .item = $new_items' \
              "$GENERATED_COLLECTION_FILE" > "$TEMP_COLLECTION_FILE"
           
           jq '{"collection": .}' "$TEMP_COLLECTION_FILE" > "$API_PAYLOAD_FILE"
@@ -136,12 +143,21 @@ jobs:
         env:
           POSTMAN_API_KEY: ${{ secrets.postman_api_key }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.postman_workspace_id }}
-          COLLECTION_NAME_INPUT: ${{ inputs.team_name }}
         run: |
+          _TEAM_NAME="${{ inputs.team_name }}"
+          _PROJECT_NAME="${{ inputs.project }}"
+
+          if [ -n "$_PROJECT_NAME" ] && [ "$_PROJECT_NAME" != "\"\"" ] && [ "$_PROJECT_NAME" != "''" ]; then
+            EFFECTIVE_COLLECTION_NAME="$_TEAM_NAME - $_PROJECT_NAME"
+          else
+            EFFECTIVE_COLLECTION_NAME="$_TEAM_NAME"
+          fi
+          echo "Effective Collection Name for Search: $EFFECTIVE_COLLECTION_NAME"
+
           echo "action=create" >> $GITHUB_OUTPUT # Default to create
           echo "target_collection_uid=" >> $GITHUB_ENV 
 
-          echo "Listing collections in workspace ${{ secrets.postman_workspace_id }} to find if '${{ inputs.team_name }}' exists..."
+          echo "Listing collections in workspace ${{ secrets.postman_workspace_id }} to find if '$EFFECTIVE_COLLECTION_NAME' exists..."
           API_URL="https://api.getpostman.com/collections?workspace=${{ secrets.postman_workspace_id }}"
           
           response=$(curl --location --request GET "$API_URL" \
@@ -156,19 +172,18 @@ jobs:
           
           if [ "$http_status" -ne 200 ]; then
             echo "Error listing collections. Status: $http_status."
-            echo "Proceeding to create a new collection due to an error fetching existing collections."
-            # Keep action=create and target_collection_uid empty
-            exit 0
+            # Proceeding to create a new collection due to an error fetching existing collections.
+            exit 0 # Keep action=create and target_collection_uid empty
           fi
 
-          EXISTING_COLLECTION_UID=$(echo "$body" | jq -r --arg name "$COLLECTION_NAME_INPUT" '.collections[] | select(.name == $name) | .id' | head -n 1)
+          EXISTING_COLLECTION_UID=$(echo "$body" | jq -r --arg name "$EFFECTIVE_COLLECTION_NAME" '.collections[] | select(.name == $name) | .id' | head -n 1)
           
           if [ -n "$EXISTING_COLLECTION_UID" ] && [ "$EXISTING_COLLECTION_UID" != "null" ]; then
-            echo "Collection named '$COLLECTION_NAME_INPUT' found with UID: $EXISTING_COLLECTION_UID. Will update."
-            echo "action=update" >> $GITHUB_OUTPUT
+            echo "Collection named '$EFFECTIVE_COLLECTION_NAME' found with UID: $EXISTING_COLLECTION_UID. Will update."
+            echo "action=update" >> $GITHUB_OUTPUT # Corrected from direct env var to GITHUB_OUTPUT
             echo "target_collection_uid=$EXISTING_COLLECTION_UID" >> $GITHUB_ENV
           else
-            echo "No collection named '$COLLECTION_NAME_INPUT' found in workspace. Will create a new one."
+            echo "No collection named '$EFFECTIVE_COLLECTION_NAME' found in workspace. Will create a new one."
             # action remains create (default) and target_collection_uid remains empty
           fi
       
