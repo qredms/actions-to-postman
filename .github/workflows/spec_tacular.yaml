@@ -1,4 +1,6 @@
-name: Reusable Postman Collection Management
+name: Spec-tacular
+description: |
+  Keeping your OpenAPI specs and Postman collections in perfect harmony.
 
 on:
   workflow_call:
@@ -8,13 +10,14 @@ on:
         required: true
         type: string
       project:
-        description: 'Desired folder structure (e.g., "Github Actions/Auto Generated"). Leave empty for root.'
+        description: 'Desired folder structure (e.g., "Your Team/Your Project"). Leave empty for root.'
         required: false
         type: string
         default: ''
       openapi_file_path:
         description: 'Path to the OpenAPI specification file'
         required: true
+        default: 'cloudformation/openapi.yaml'
         type: string
     secrets:
       postman_api_key:
@@ -27,9 +30,6 @@ on:
       collection_uid:
         description: 'The UID of the created or updated Postman collection'
         value: ${{ jobs.manage_collection.outputs.collection_uid }}
-      collection_url:
-        description: 'The URL of the created or updated Postman collection'
-        value: ${{ jobs.manage_collection.outputs.collection_url }}
 
 jobs:
   manage_collection:
@@ -47,7 +47,7 @@ jobs:
           node-version: '20'
 
       - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+        run: sudo apt-get install -y jq
 
       - name: Validate OpenAPI file
         run: |
@@ -168,7 +168,7 @@ jobs:
           
       - name: Prepare Collection JSON for API Request
         id: prepare_api_payload
-        env: # Add env vars for direct access to inputs/secrets if needed by scripts
+        env:
           ACTION: ${{ steps.determine_action.outputs.action }}
           TEAM_NAME: ${{ inputs.team_name }}
           PROJECT_NAME: ${{ inputs.project }}

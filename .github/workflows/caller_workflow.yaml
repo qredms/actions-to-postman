@@ -17,8 +17,8 @@ on:
         default: 'Github Actions/Auto Generated'
 
 jobs:
-  call_reusable_workflow:
-    uses: ./.github/workflows/reusable_manage_postman_collection.yaml
+  generate_and_push_collection:
+    uses: ./.github/workflows/spec_tacular.yaml
     with:
       team_name: ${{ github.event.inputs.team_name }}
       openapi_file_path: ${{ github.event.inputs.openapi_file }}
@@ -29,14 +29,14 @@ jobs:
 
   report_outputs:
     runs-on: ubuntu-latest
-    needs: call_reusable_workflow
+    needs: generate_and_push_collection
     if: always() # Run this job even if the reusable workflow fails, to see partial outputs or errors
     steps:
       - name: Display Reusable Workflow Outputs
         run: |
           echo "Reusable workflow execution completed."
-          echo "Collection UID: ${{ needs.call_reusable_workflow.outputs.collection_uid }}"
+          echo "Collection UID: ${{ needs.generate_and_push_collection.outputs.collection_uid }}"
           
-          if [ -z "${{ needs.call_reusable_workflow.outputs.collection_uid }}" ]; then
+          if [ -z "${{ needs.generate_and_push_collection.outputs.collection_uid }}" ]; then
             echo "Warning: Collection UID is empty. The reusable workflow might have failed or did not produce a UID."
           fi
