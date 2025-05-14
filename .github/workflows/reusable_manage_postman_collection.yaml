@@ -66,6 +66,7 @@ jobs:
         run: |
           INPUT_OAS_FILE="${{ inputs.openapi_file_path }}"
           OUTPUT_COLLECTION_FILE="generated_postman_collection.json"
+          RAW_ITEMS_FILE="raw_project_items.json"
           echo "Running OpenAPI to Postman conversion for $INPUT_OAS_FILE..."
           openapi2postmanv2 -s "$INPUT_OAS_FILE" -o "$OUTPUT_COLLECTION_FILE" -p
           
@@ -79,95 +80,31 @@ jobs:
             exit 1
           fi
           echo "Generated Postman collection: $OUTPUT_COLLECTION_FILE"
-          echo "generated_collection_path=$OUTPUT_COLLECTION_FILE" >> $GITHUB_OUTPUT
-
-      - name: Prepare Collection JSON for API Request
-        id: prepare_api_payload
-        run: |
-          GENERATED_COLLECTION_FILE="${{ steps.generate_collection.outputs.generated_collection_path }}"
-          TEAM_NAME_INPUT="${{ inputs.team_name }}"
-          PROJECT_INPUT="${{ inputs.project }}"
-          API_PAYLOAD_FILE="postman_api_payload.json"
-          TEMP_COLLECTION_FILE="temp_collection_for_api.json"
-
-          # Determine EFFECTIVE_COLLECTION_NAME (for info.name of the collection entity)
-          if [ -n "$PROJECT_INPUT" ] && [ "$PROJECT_INPUT" != "\"\"" ] && [ "$PROJECT_INPUT" != "''" ]; then
-            EFFECTIVE_COLLECTION_NAME="$TEAM_NAME_INPUT - $PROJECT_INPUT"
-          else
-            EFFECTIVE_COLLECTION_NAME="$TEAM_NAME_INPUT"
-          fi
-          echo "Effective Collection Name for API Payload (info.name): $EFFECTIVE_COLLECTION_NAME"
-
-          # Determine HIERARCHICAL_FOLDER_PATH (for internal folder structure)
-          if [ -n "$PROJECT_INPUT" ] && [ "$PROJECT_INPUT" != "\"\"" ] && [ "$PROJECT_INPUT" != "''" ]; then
-            HIERARCHICAL_FOLDER_PATH="$TEAM_NAME_INPUT/$PROJECT_INPUT"
-          else
-            HIERARCHICAL_FOLDER_PATH="$TEAM_NAME_INPUT"
-          fi
-          echo "Hierarchical folder path for internal nesting: $HIERARCHICAL_FOLDER_PATH"
-
-          # Function to generate the new item structure based on the hierarchical path
-          generate_nested_items() {
-            local items_json_str="$1"
-            local structure="$2"
-
-            if [ -z "$structure" ] || [ "$structure" == "\"\"" ] || [ "$structure" == "''" ]; then
-              echo "$items_json_str" # Return original items if no folder structure
-              return
-            fi
-
-            local current_nested_json="$items_json_str"
-            local temp_folders=()
-            IFS='/' read -r -a temp_folders <<< "$structure"
-
-            for (( i=${#temp_folders[@]}-1; i>=0; i-- )); do
-              folder_name="${temp_folders[$i]}"
-              # Escape double quotes in folder name for JSON string
-              escaped_folder_name=$(echo "$folder_name" | sed 's/"/\\"/g')
-              current_nested_json="[{\"name\": \"$escaped_folder_name\", \"item\": $current_nested_json}]"
-            done
-            echo "$current_nested_json"
-          }
-
-          ORIGINAL_ITEMS_JSON=$(jq '.item // []' "$GENERATED_COLLECTION_FILE")
-          # Use HIERARCHICAL_FOLDER_PATH for nesting
-          NESTED_ITEMS_JSON=$(generate_nested_items "$ORIGINAL_ITEMS_JSON" "$HIERARCHICAL_FOLDER_PATH")
-
-          # Use EFFECTIVE_COLLECTION_NAME for .info.name and NESTED_ITEMS_JSON for .item
-          jq --arg collection_name "$EFFECTIVE_COLLECTION_NAME" \
-             --argjson new_items "$NESTED_ITEMS_JSON" \
-             '.info.name = $collection_name | .item = $new_items' \
-             "$GENERATED_COLLECTION_FILE" > "$TEMP_COLLECTION_FILE"
-          
-          jq '{"collection": .}' "$TEMP_COLLECTION_FILE" > "$API_PAYLOAD_FILE"
-
-          if ! jq empty "$API_PAYLOAD_FILE" 2>/dev/null; then
-            echo "Error: API payload '$API_PAYLOAD_FILE' is not valid JSON!"
+          # Extract the raw items (requests) from the generated collection
+          jq '.item // []' "$OUTPUT_COLLECTION_FILE" > "$RAW_ITEMS_FILE"
+          if ! jq empty "$RAW_ITEMS_FILE" 2>/dev/null; then
+            echo "Error: Extracted raw items file '$RAW_ITEMS_FILE' is not valid JSON!"
+            cat "$RAW_ITEMS_FILE"
             exit 1
           fi
-          echo "Prepared API payload file: $API_PAYLOAD_FILE"
-          echo "api_payload_path=$API_PAYLOAD_FILE" >> $GITHUB_OUTPUT
+          echo "Extracted raw items to $RAW_ITEMS_FILE"
+          echo "generated_collection_path=$OUTPUT_COLLECTION_FILE" >> $GITHUB_OUTPUT
+          echo "raw_items_path=$RAW_ITEMS_FILE" >> $GITHUB_OUTPUT
 
-      - name: Determine Action (Check if Collection Exists by Name)
+      - name: Determine Action (Check if Team Collection Exists by Name)
         id: determine_action
         env:
           POSTMAN_API_KEY: ${{ secrets.postman_api_key }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.postman_workspace_id }}
         run: |
-          _TEAM_NAME="${{ inputs.team_name }}"
-          _PROJECT_NAME="${{ inputs.project }}"
-
-          if [ -n "$_PROJECT_NAME" ] && [ "$_PROJECT_NAME" != "\"\"" ] && [ "$_PROJECT_NAME" != "''" ]; then
-            EFFECTIVE_COLLECTION_NAME="$_TEAM_NAME - $_PROJECT_NAME"
-          else
-            EFFECTIVE_COLLECTION_NAME="$_TEAM_NAME"
-          fi
-          echo "Effective Collection Name for Search: $EFFECTIVE_COLLECTION_NAME"
+          # Collection name for search is the Team Name
+          TEAM_COLLECTION_NAME="${{ inputs.team_name }}"
+          echo "Searching for existing Team Collection named: $TEAM_COLLECTION_NAME"
 
           echo "action=create" >> $GITHUB_OUTPUT # Default to create
           echo "target_collection_uid=" >> $GITHUB_ENV 
 
-          echo "Listing collections in workspace ${{ secrets.postman_workspace_id }} to find if '$EFFECTIVE_COLLECTION_NAME' exists..."
+          echo "Listing collections in workspace ${{ secrets.postman_workspace_id }} to find if '$TEAM_COLLECTION_NAME' exists..."
           API_URL="https://api.getpostman.com/collections?workspace=${{ secrets.postman_workspace_id }}"
           
           response=$(curl --location --request GET "$API_URL" \
@@ -182,21 +119,119 @@ jobs:
           
           if [ "$http_status" -ne 200 ]; then
             echo "Error listing collections. Status: $http_status."
-            # Proceeding to create a new collection due to an error fetching existing collections.
+            echo "Proceeding to create a new collection due to an error fetching existing collections."
             exit 0 # Keep action=create and target_collection_uid empty
           fi
 
-          EXISTING_COLLECTION_UID=$(echo "$body" | jq -r --arg name "$EFFECTIVE_COLLECTION_NAME" '.collections[] | select(.name == $name) | .id' | head -n 1)
+          EXISTING_COLLECTION_UID=$(echo "$body" | jq -r --arg name "$TEAM_COLLECTION_NAME" '.collections[] | select(.name == $name) | .uid' | head -n 1) # .uid not .id
           
           if [ -n "$EXISTING_COLLECTION_UID" ] && [ "$EXISTING_COLLECTION_UID" != "null" ]; then
-            echo "Collection named '$EFFECTIVE_COLLECTION_NAME' found with UID: $EXISTING_COLLECTION_UID. Will update."
-            echo "action=update" >> $GITHUB_OUTPUT # Corrected from direct env var to GITHUB_OUTPUT
+            echo "Team Collection named '$TEAM_COLLECTION_NAME' found with UID: $EXISTING_COLLECTION_UID. Will update."
+            echo "action=update" >> $GITHUB_OUTPUT
             echo "target_collection_uid=$EXISTING_COLLECTION_UID" >> $GITHUB_ENV
           else
-            echo "No collection named '$EFFECTIVE_COLLECTION_NAME' found in workspace. Will create a new one."
+            echo "No Team Collection named '$TEAM_COLLECTION_NAME' found in workspace. Will create a new one."
             # action remains create (default) and target_collection_uid remains empty
           fi
-      
+
+      - name: Fetch Existing Team Collection for Update
+        id: fetch_existing_collection
+        if: steps.determine_action.outputs.action == 'update'
+        env:
+          POSTMAN_API_KEY: ${{ secrets.postman_api_key }}
+          TARGET_COLLECTION_UID: ${{ env.target_collection_uid }}
+        outputs:
+          existing_collection_path: existing_team_collection.json
+        run: |
+          echo "Fetching existing team collection with UID: $TARGET_COLLECTION_UID"
+          API_URL="https://api.getpostman.com/collections/$TARGET_COLLECTION_UID"
+          OUTPUT_FILE="existing_team_collection.json"
+
+          response=$(curl --location --request GET "$API_URL" \
+            --header "X-Api-Key: $POSTMAN_API_KEY" \
+            --silent --write-out "HTTPSTATUS:%{http_code}")
+          
+          http_status=$(echo "$response" | tr -d '\\n' | sed -e 's/.*HTTPSTATUS://')
+          body=$(echo "$response" | sed -e 's/HTTPSTATUS:.*//')
+
+          if [ "$http_status" -eq 200 ]; then
+            echo "$body" > "$OUTPUT_FILE"
+            if ! jq empty "$OUTPUT_FILE" 2>/dev/null; then
+              echo "Error: Fetched existing collection is not valid JSON!"
+              cat "$OUTPUT_FILE"; exit 1
+            fi
+            echo "Fetched existing collection and saved to $OUTPUT_FILE"
+            echo "existing_collection_path=$OUTPUT_FILE" >> $GITHUB_OUTPUT
+          else
+            echo "Error fetching existing collection. Status: $http_status. Body: $body"
+            echo "Cannot proceed with update. Consider this a failure or switch to create if appropriate."
+            exit 1 # Fail the step if fetching fails for an update
+          fi
+          
+      - name: Prepare Collection JSON for API Request
+        id: prepare_api_payload
+        env: # Add env vars for direct access to inputs/secrets if needed by scripts
+          ACTION: ${{ steps.determine_action.outputs.action }}
+          TEAM_NAME: ${{ inputs.team_name }}
+          PROJECT_NAME: ${{ inputs.project }}
+          RAW_ITEMS_FILE_PATH: ${{ steps.generate_collection.outputs.raw_items_path }}
+          EXISTING_COLLECTION_FILE_PATH: ${{ steps.fetch_existing_collection.outputs.existing_collection_path }}
+        run: |
+          # Script inputs available via env vars defined above
+          API_PAYLOAD_FILE="postman_api_payload.json"
+
+          echo "Preparing API Payload. Action: $ACTION"
+          echo "Team: $TEAM_NAME, Project: $PROJECT_NAME"
+
+          NEW_PROJECT_REQUESTS_JSON=$(cat "$RAW_ITEMS_FILE_PATH")
+
+          # This is the content for the specific project (requests wrapped in a project folder, or raw requests if no project)
+          if [ -n "$PROJECT_NAME" ] && [ "$PROJECT_NAME" != "\"\"" ] && [ "$PROJECT_NAME" != "''" ]; then
+            # PROJECT_CONTENT_JSON will be an array containing a single folder object for the project
+            PROJECT_CONTENT_JSON=$(jq -n --arg project_name "$PROJECT_NAME" --argjson items "$NEW_PROJECT_REQUESTS_JSON" \
+              '[{"name": $project_name, "item": $items, "_postman_isSubFolder": true}]')
+          else
+            # No project name, content is the raw requests array directly
+            PROJECT_CONTENT_JSON="$NEW_PROJECT_REQUESTS_JSON"
+          fi
+
+          if [ "$ACTION" == "create" ]; then
+            echo "Action: Create. Preparing new Team Collection: $TEAM_NAME"
+            # For a new Team collection, its 'item' array is the PROJECT_CONTENT_JSON
+            jq -n --arg team_name_val "$TEAM_NAME" --argjson items_array "$PROJECT_CONTENT_JSON" \
+              '{ "collection": { "info": { "name": $team_name_val, "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" }, "item": $items_array } }' > "$API_PAYLOAD_FILE"
+
+          elif [ "$ACTION" == "update" ]; then
+            echo "Action: Update. Preparing to update Team Collection: $TEAM_NAME"
+            EXISTING_TEAM_COLLECTION_ENTIRE_JSON=$(cat "$EXISTING_COLLECTION_FILE_PATH")
+
+            if [ -n "$PROJECT_NAME" ] && [ "$PROJECT_NAME" != "\"\"" ] && [ "$PROJECT_NAME" != "''" ]; then
+              echo "Updating/Adding Project Folder: $PROJECT_NAME within Team Collection $TEAM_NAME"
+              # PROJECT_CONTENT_JSON is `[{"name":"MyProject", "item":[...]}]`
+              # Modify the existing team collection's item array:
+              # 1. Filter out any existing folder with the same project name.
+              # 2. Concatenate the new project folder.
+              jq --arg project_name_val "$PROJECT_NAME" --argjson new_project_folder_array "$PROJECT_CONTENT_JSON" \
+                '.collection.item = ([.collection.item[]? | select(.name != $project_name_val)] + $new_project_folder_array)' \
+                <<< "$EXISTING_TEAM_COLLECTION_ENTIRE_JSON" > "$API_PAYLOAD_FILE"
+            else
+              echo "No project specified for update. Replacing all root items in Team Collection: $TEAM_NAME"
+              # PROJECT_CONTENT_JSON is `[...]` (raw requests array)
+              # Replace the entire 'item' array of the existing team collection
+              jq --argjson new_root_items "$PROJECT_CONTENT_JSON" \
+                '.collection.item = $new_root_items' \
+                <<< "$EXISTING_TEAM_COLLECTION_ENTIRE_JSON" > "$API_PAYLOAD_FILE"
+            fi
+          fi
+          
+          if ! jq empty "$API_PAYLOAD_FILE" 2>/dev/null; then
+            echo "Error: Final API payload '$API_PAYLOAD_FILE' is not valid JSON!"
+            cat "$API_PAYLOAD_FILE"; exit 1
+          fi
+          echo "Prepared API payload file: $API_PAYLOAD_FILE"
+          ls -l "$API_PAYLOAD_FILE" # Show file size for debugging
+          echo "api_payload_path=$API_PAYLOAD_FILE" >> $GITHUB_OUTPUT
+
       - name: Update Existing Collection
         id: update_collection_step
         if: steps.determine_action.outputs.action == 'update'
