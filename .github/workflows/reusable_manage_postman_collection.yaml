@@ -85,12 +85,12 @@ jobs:
         id: prepare_api_payload
         run: |
           GENERATED_COLLECTION_FILE="${{ steps.generate_collection.outputs.generated_collection_path }}"
-          COLLECTION_NAME="${{ inputs.collection_name }}"
-          FOLDER_STRUCTURE="${{ inputs.folder_structure }}"
+          COLLECTION_NAME="${{ inputs.team_name }}"
+          FOLDER_STRUCTURE="${{ inputs.project }}"
           API_PAYLOAD_FILE="postman_api_payload.json"
           TEMP_COLLECTION_FILE="temp_collection_for_api.json"
 
-          # Function to generate the new item structure based on folder_structure
+          # Function to generate the new item structure based on project
           generate_nested_items() {
             local items_json_str="$1"
             local structure="$2"
@@ -117,9 +117,9 @@ jobs:
 
           NESTED_ITEMS_JSON=$(generate_nested_items "$ORIGINAL_ITEMS_JSON" "$FOLDER_STRUCTURE")
 
-          jq --arg collection_name "$COLLECTION_NAME" \
+          jq --arg team_name "$COLLECTION_NAME" \
              --argjson new_items "$NESTED_ITEMS_JSON" \
-             '.info.name = $collection_name | .item = $new_items' \
+             '.info.name = $team_name | .item = $new_items' \
              "$GENERATED_COLLECTION_FILE" > "$TEMP_COLLECTION_FILE"
           
           jq '{"collection": .}' "$TEMP_COLLECTION_FILE" > "$API_PAYLOAD_FILE"
@@ -136,12 +136,12 @@ jobs:
         env:
           POSTMAN_API_KEY: ${{ secrets.postman_api_key }}
           POSTMAN_WORKSPACE_ID: ${{ secrets.postman_workspace_id }}
-          COLLECTION_NAME_INPUT: ${{ inputs.collection_name }}
+          COLLECTION_NAME_INPUT: ${{ inputs.team_name }}
         run: |
           echo "action=create" >> $GITHUB_OUTPUT # Default to create
           echo "target_collection_uid=" >> $GITHUB_ENV 
 
-          echo "Listing collections in workspace ${{ secrets.postman_workspace_id }} to find if '${{ inputs.collection_name }}' exists..."
+          echo "Listing collections in workspace ${{ secrets.postman_workspace_id }} to find if '${{ inputs.team_name }}' exists..."
           API_URL="https://api.getpostman.com/collections?workspace=${{ secrets.postman_workspace_id }}"
           
           response=$(curl --location --request GET "$API_URL" \
