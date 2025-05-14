@@ -14,7 +14,7 @@ on:
       project:
         description: 'Optional folder structure in Postman (e.g., Github Actions/Auto Generated)'
         required: false
-        default: 'Caller Github Actions/Auto Generated'
+        default: 'Github Actions/Auto Generated'
 
 jobs:
   call_reusable_workflow:
