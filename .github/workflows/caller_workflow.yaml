@@ -36,7 +36,6 @@ jobs:
         run: |
           echo "Reusable workflow execution completed."
           echo "Collection UID: ${{ needs.call_reusable_workflow.outputs.collection_uid }}"
-          echo "Collection URL: ${{ needs.call_reusable_workflow.outputs.collection_url }}"
           
           if [ -z "${{ needs.call_reusable_workflow.outputs.collection_uid }}" ]; then
             echo "Warning: Collection UID is empty. The reusable workflow might have failed or did not produce a UID."
