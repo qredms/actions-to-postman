@@ -3,12 +3,12 @@ name: Reusable Postman Collection Management
 on:
   workflow_call:
     inputs:
-      collection_name:
-        description: 'Name of the Postman collection'
+      team_name:
+        description: 'Team name for the Postman collection'
         required: true
         type: string
-      folder_structure:
-        description: 'Desired folder structure (e.g., "TeamA/ProjectB/ModuleC"). Leave empty for root.'
+      project::
+        description: 'Desired folder structure (e.g., "Github Actions/Auto Generated"). Leave empty for root.'
         required: false
         type: string
         default: ''

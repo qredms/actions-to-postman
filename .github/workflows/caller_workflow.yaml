@@ -3,26 +3,26 @@ name: Call Reusable Postman Workflow
 on:
   workflow_dispatch: # Allows manual triggering
     inputs:
-      collection_name:
-        description: 'Name for the Postman collection'
+      team_name:
+        description: 'Team name for the Postman collection'
         required: true
-        default: 'My Test API Collection from Caller'
+        default: 'Card Services'
       openapi_file:
         description: 'Path to the OpenAPI spec file'
         required: true
         default: 'cloudformation/openapi.yaml'
-      folder_structure:
-        description: 'Optional folder structure in Postman (e.g., Team/Project)'
+      project:
+        description: 'Optional folder structure in Postman (e.g., Github Actions/Auto Generated)'
         required: false
-        default: 'CallerTeam/CallerProject'
+        default: 'Caller Github Actions/Auto Generated'
 
 jobs:
   call_reusable_workflow:
     uses: ./.github/workflows/reusable_manage_postman_collection.yaml
     with:
-      collection_name: ${{ github.event.inputs.collection_name }}
+      team_name: ${{ github.event.inputs.team_name }}
       openapi_file_path: ${{ github.event.inputs.openapi_file }}
-      folder_structure: ${{ github.event.inputs.folder_structure }}
+      project: ${{ github.event.inputs.project }}
     secrets:
       postman_api_key: ${{ secrets.POSTMAN_API_KEY }} # Ensure this secret is set in your repository
       postman_workspace_id: ${{ secrets.POSTMAN_WORKSPACE_ID }} # Ensure this secret is set in your repository
