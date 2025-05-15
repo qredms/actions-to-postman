@@ -8,7 +8,7 @@ info:
 # Api Paths
 paths:
   # Transaction Notifications
-  /notification:
+  /notifications:
     post:
       summary: Receives transaction notifications
       operationId: PostNotification
