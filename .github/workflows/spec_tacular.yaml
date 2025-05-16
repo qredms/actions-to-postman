@@ -240,12 +240,11 @@ jobs:
         run: |
           echo "Updating existing collection with UID: $TARGET_COLLECTION_UID"
           API_URL="https://api.getpostman.com/collections/$TARGET_COLLECTION_UID"
-          JSON_PAYLOAD=$(cat "$API_PAYLOAD_FILE")
           
           response=$(curl --location --request PUT "$API_URL" \
             --header "X-Api-Key: $POSTMAN_API_KEY" \
             --header "Content-Type: application/json" \
-            --data "$JSON_PAYLOAD" \
+            --data-binary "@$API_PAYLOAD_FILE" \
             --silent --write-out "HTTPSTATUS:%{http_code}")
           
           http_status=$(echo "$response" | tr -d '\\n' | sed -e 's/.*HTTPSTATUS://')
@@ -273,12 +272,11 @@ jobs:
         run: |
           echo "Creating new collection..."
           API_URL="https://api.getpostman.com/collections?workspace=$POSTMAN_WORKSPACE_ID"
-          JSON_PAYLOAD=$(cat "$API_PAYLOAD_FILE")
 
           response=$(curl --location --request POST "$API_URL" \
             --header "X-Api-Key: $POSTMAN_API_KEY" \
             --header "Content-Type: application/json" \
-            --data "$JSON_PAYLOAD" \
+            --data-binary "@$API_PAYLOAD_FILE" \
             --silent --write-out "HTTPSTATUS:%{http_code}")
 
           http_status=$(echo "$response" | tr -d '\\n' | sed -e 's/.*HTTPSTATUS://')
