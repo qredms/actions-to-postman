@@ -12,8 +12,8 @@ servers:
         default: 'https://test.api.qred.com/v1' # Default value (e.g., for test)
         description: 'Base URL for the API. Can be set to the test or production environment.'
         enum: # List of allowed/example values
-          - 'https://test.api.qred.com/v1'  # Test environment URL
-          - 'https://api.qred.com/v1'        # Production environment URL
+          - 'https://test.api.qred.com/v1'  # Test environment
+          - 'https://api.qred.com/v1'        # Production environment
 
 # Api Paths
 paths:
