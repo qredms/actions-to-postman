@@ -6,7 +6,7 @@ info:
   description: Qred Card public facing API - used by Enfuce to post notifications when an entity gets modified. All Lambdas require Basic authentication.
 
 servers:
-  - url: '{baseUrl}' # This will be converted to {{baseUrl}} in Postman requests
+  - url: '{baseUrl}' # This will be converted to {{baseUrl}} in Postman request
     variables:
       baseUrl:
         default: 'https://test.api.qred.com/v1' # Default value (e.g., for test)

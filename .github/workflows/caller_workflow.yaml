@@ -15,6 +15,10 @@ on:
         description: 'Optional folder structure in Postman (e.g., Github Actions/Auto Generated)'
         required: false
         default: 'Github Actions/Auto Generated'
+      overwrite_existing_params:
+        description: 'Overwrite existing parameters in Postman collection'
+        required: false
+        default: 'false'
 
 jobs:
   generate_and_push_collection:
