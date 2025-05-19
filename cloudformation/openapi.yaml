@@ -8,7 +8,7 @@ info:
 servers:
   - url: '{baseUrlNew}' # This will be converted to {{baseUrl}} in Postman request
     variables:
-      baseUrl:
+      baseUrlNew:
         default: 'https://test.api.qred.com/v1' # Default value (e.g., for test)
         description: 'Base URL for the API. Can be set to the test or production environment.'
         enum: # List of allowed/example values
