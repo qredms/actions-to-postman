@@ -18,7 +18,8 @@ on:
       overwrite_existing_params:
         description: 'Overwrite existing parameters in Postman collection'
         required: false
-        default: 'false'
+        type: boolean
+        default: false
 
 jobs:
   generate_and_push_collection:

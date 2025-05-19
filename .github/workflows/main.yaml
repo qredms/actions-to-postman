@@ -32,7 +32,7 @@ jobs:
       team_name: 'Card Services'
       openapi_file_path: 'cloudformation/openapi.yaml'
       project: 'actions-to-postman'
-      overwrite_existing_params: 'true'
+      overwrite_existing_params: true
     secrets:
       postman_api_key: ${{ secrets.POSTMAN_API_KEY }}
       postman_workspace_id: ${{ secrets.POSTMAN_WORKSPACE_ID }}

@@ -22,8 +22,8 @@ on:
       overwrite_existing_params:
         description: 'Whether to overwrite existing environment variables with same name from the OpenAPI spec (true/false)'
         required: false
-        type: string
-        default: 'false'
+        type: boolean
+        default: false
     secrets:
       postman_api_key:
         description: 'Postman API Key'
