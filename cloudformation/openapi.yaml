@@ -1,12 +1,11 @@
 openapi: '3.0.3'
 info:
-  title:
-    Ref: AWS::StackName
+  title: Qred Card API
   version: 1.0.0
   description: Qred Card public facing API
 
 servers:
-  - url: '{baseUrlNew}' # This will be converted to {{baseUrl}} in Postman request
+  - url: '{baseUrlNew}' # This will be converted to {{baseUrlNew}} in Postman request
     variables:
       baseUrlNew:
         default: 'https://test.api.qred.com/v1' # Default value (e.g., for test)
