@@ -292,6 +292,7 @@ jobs:
           EXISTING_COLLECTION_FILE_PATH: ${{ steps.fetch_existing_collection.outputs.existing_collection_path }}
           NEW_ENV_VARS_FILE_PATH: ${{ steps.generate_collection.outputs.new_env_vars_path }}
           MERGED_ENV_VARS_FILE_PATH: ${{ steps.merge_environment.outputs.merged_env_vars_path }}
+          EXISTING_ENV_FILE_PATH_INPUT: ${{ steps.extract_environment.outputs.environment_vars_path }}
         run: |
           # Script inputs available via env vars defined above
           API_PAYLOAD_FILE="postman_api_payload.json"
@@ -301,17 +302,83 @@ jobs:
 
           NEW_PROJECT_REQUESTS_JSON=$(cat "$RAW_ITEMS_FILE_PATH")
 
-          # Determine which environment variables to use
-          if [ "$ACTION" == "update" ] && [ -f "$MERGED_ENV_VARS_FILE_PATH" ]; then
-            echo "Using merged environment variables"
-            ENV_VARS_TO_USE=$(cat "$MERGED_ENV_VARS_FILE_PATH")
-          elif [ -f "$NEW_ENV_VARS_FILE_PATH" ]; then
-            echo "Using only new environment variables from OpenAPI spec"
-            ENV_VARS_TO_USE=$(cat "$NEW_ENV_VARS_FILE_PATH")
+          # Script for determining ENV_VARS_TO_USE
+          # This script will be part of the larger prepare_api_payload bash script.
+          # It assumes the following environment variables are available from the step's `env:` mapping:
+          # - PROJECT_NAME
+          # - ACTION
+          # - NEW_ENV_VARS_FILE_PATH
+          # - MERGED_ENV_VARS_FILE_PATH (only set if ACTION is 'update')
+          # - EXISTING_ENV_FILE_PATH_INPUT (only set if ACTION is 'update')
+
+          echo "Determining ENV_VARS_TO_USE..."
+          echo "PROJECT_NAME: '$PROJECT_NAME'"
+          echo "ACTION: $ACTION"
+          echo "NEW_ENV_VARS_FILE_PATH: $NEW_ENV_VARS_FILE_PATH"
+          echo "MERGED_ENV_VARS_FILE_PATH: $MERGED_ENV_VARS_FILE_PATH"
+          echo "EXISTING_ENV_FILE_PATH_INPUT: $EXISTING_ENV_FILE_PATH_INPUT"
+
+          ENV_VARS_TO_USE="[]" # Default to empty array
+
+          if [ -n "$PROJECT_NAME" ] && [ "$PROJECT_NAME" != """" ] && [ "$PROJECT_NAME" != "''" ]; then
+            # Project is specified
+            echo "Project is specified. OpenAPI environment variables will be processed for the collection."
+            if [ "$ACTION" == "update" ]; then
+              if [ -f "$MERGED_ENV_VARS_FILE_PATH" ]; then
+                echo "Using merged environment variables from $MERGED_ENV_VARS_FILE_PATH."
+                ENV_VARS_TO_USE=$(cat "$MERGED_ENV_VARS_FILE_PATH")
+              else
+                echo "Warning: ACTION is update and project is specified, but MERGED_ENV_VARS_FILE_PATH ($MERGED_ENV_VARS_FILE_PATH) was not found or is not a file. Checking for new OpenAPI vars as fallback."
+                if [ -f "$NEW_ENV_VARS_FILE_PATH" ]; then
+                  echo "Fallback: Using new environment variables from OpenAPI spec ($NEW_ENV_VARS_FILE_PATH)."
+                  ENV_VARS_TO_USE=$(cat "$NEW_ENV_VARS_FILE_PATH")
+                else
+                  echo "Fallback: No new environment variables file found. ENV_VARS_TO_USE will be empty."
+                  ENV_VARS_TO_USE="[]"
+                fi
+              fi
+            else # ACTION == "create" for a project
+              if [ -f "$NEW_ENV_VARS_FILE_PATH" ]; then
+                echo "Using new environment variables from OpenAPI spec ($NEW_ENV_VARS_FILE_PATH) for project creation."
+                ENV_VARS_TO_USE=$(cat "$NEW_ENV_VARS_FILE_PATH")
+              else
+                echo "No new environment variables file found for project creation. ENV_VARS_TO_USE will be empty."
+                ENV_VARS_TO_USE="[]"
+              fi
+            fi
           else
-            echo "No environment variables to include"
+            # Project is NOT specified (operating at root of team collection)
+            echo "Project is NOT specified. Handling environment variables for team collection root."
+            if [ "$ACTION" == "update" ]; then
+              echo "Updating team collection root. Preserving existing collection environment variables."
+              if [ -f "$EXISTING_ENV_FILE_PATH_INPUT" ]; then
+                  ENV_VARS_TO_USE=$(cat "$EXISTING_ENV_FILE_PATH_INPUT")
+                  echo "Using existing env vars from $EXISTING_ENV_FILE_PATH_INPUT"
+              else
+                  echo "Warning: Existing env file ($EXISTING_ENV_FILE_PATH_INPUT) not found or not a file for root update. ENV_VARS_TO_USE will be empty, preserving variables' absence."
+                  ENV_VARS_TO_USE="[]"
+              fi
+            else # ACTION == "create" for root
+              if [ -f "$NEW_ENV_VARS_FILE_PATH" ]; then
+                echo "Creating team collection root. Using new environment variables from OpenAPI spec ($NEW_ENV_VARS_FILE_PATH)."
+                ENV_VARS_TO_USE=$(cat "$NEW_ENV_VARS_FILE_PATH")
+              else
+                echo "No new environment variables file found for root creation. ENV_VARS_TO_USE will be empty."
+                ENV_VARS_TO_USE="[]"
+              fi
+            fi
+          fi
+
+          # Ensure ENV_VARS_TO_USE is valid JSON, default to [] if it's empty or invalid
+          if ! echo "$ENV_VARS_TO_USE" | jq empty 2>/dev/null; then
+            echo "Warning: ENV_VARS_TO_USE was not valid JSON. Defaulting to []."
+            echo "Problematic content: $ENV_VARS_TO_USE"
             ENV_VARS_TO_USE="[]"
           fi
+
+          echo "Final ENV_VARS_TO_USE decision: $(echo "$ENV_VARS_TO_USE" | jq -c '.')"
+          # The rest of the script in prepare_api_payload that uses ENV_VARS_TO_USE will then follow.
+          # Make sure this new logic correctly replaces the old way ENV_VARS_TO_USE was set.
 
           # This is the content for the specific project (requests wrapped in a project folder, or raw requests if no project)
           if [ -n "$PROJECT_NAME" ] && [ "$PROJECT_NAME" != "\"\"" ] && [ "$PROJECT_NAME" != "''" ]; then
